@@ -24,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--features-dir", required=True, help="Directory with stations/*_features.csv.")
     parser.add_argument("--output", default="production_models/fof2_next_15min.joblib")
     parser.add_argument("--horizon", default="15min")
+    parser.add_argument("--dataset-step", default="15min", help="Duration of each aggregated feature/target interval.")
     parser.add_argument("--target", default="foF2")
     parser.add_argument("--test-start", default="2025-10-01T00:00:00Z")
     parser.add_argument("--max-rows", type=int, default=0, help="Optional deterministic row cap for smoke runs.")
@@ -46,7 +47,7 @@ def main() -> None:
     target_column = f"{args.target}_target_{safe_name(args.horizon)}"
     frame = load_training_frame(paths, target_column, args.max_rows, args.rows_per_station, args.random_state)
     feature_columns = numeric_feature_columns(frame, args.target)
-    train, test = split_train_test(frame, args.test_start)
+    train, test = split_train_test(frame, args.test_start, args.horizon, args.dataset_step)
     if train.empty or test.empty:
         raise ValueError("Train/test split is empty. Check --test-start and feature coverage.")
 
@@ -75,6 +76,8 @@ def main() -> None:
             "model_version": "0.1.0",
             "trained_at_utc": datetime.now(timezone.utc).isoformat(),
             "test_start": args.test_start,
+            "dataset_step": args.dataset_step,
+            "split_policy": "train target interval ends <= test-start; test target interval starts >= test-start",
             "train_rows": int(valid_train.sum()),
             "test_rows": int(valid_test.sum()),
             "metrics": metrics,
@@ -112,14 +115,22 @@ def load_training_frame(
     return frame.reset_index(drop=True)
 
 
-def split_train_test(frame: pd.DataFrame, test_start: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def split_train_test(frame: pd.DataFrame, test_start: str, horizon: str = "15min",
+                     dataset_step: str = "15min") -> tuple[pd.DataFrame, pd.DataFrame]:
     time = pd.to_datetime(frame["time_utc"], utc=True, errors="coerce")
     start = pd.Timestamp(test_start)
     if start.tzinfo is None:
         start = start.tz_localize("UTC")
     else:
         start = start.tz_convert("UTC")
-    return frame.loc[time < start].copy(), frame.loc[time >= start].copy()
+    # CSV timestamps label interval starts. A shifted target is not available
+    # until the END of its interval, even if its feature row predates the split.
+    step, delta = pd.Timedelta(dataset_step), pd.Timedelta(horizon)
+    if step <= pd.Timedelta(0) or delta < step or delta % step != pd.Timedelta(0):
+        raise ValueError("horizon must be a positive multiple of dataset-step")
+    target_start = time + delta
+    target_end = target_start + step
+    return frame.loc[target_end <= start].copy(), frame.loc[target_start >= start].copy()
 
 
 def numeric_feature_columns(frame: pd.DataFrame, target: str) -> list[str]:

@@ -108,4 +108,27 @@ python .\scripts\train_production_model.py --features-dir .\features_15min --hor
 ```
 
 The training script excludes future-derived target columns from the feature
-matrix and evaluates on rows after `--test-start`.
+matrix. The split uses target interval times: training targets must finish by
+`--test-start`, and test targets must start at or after it. `--dataset-step`
+(default 15min) specifies the aggregation interval. A pre-boundary feature row
+whose target lies in the test period is never used for training.
+
+
+## Historical month evaluation
+
+Check out `ionoscope-data` alongside this repository; the evaluation script uses
+its raw GIRO reader and normalization functions. Install optional evaluation
+packages with `python -m pip install -r requirements-evaluation.txt`.
+
+```powershell
+python scripts/evaluate_month.py --raw-dir ../archive/data/raw/giro --output ../experiment/evaluation --train-start 2024-09-01T00:00:00Z --test-start 2025-09-01T00:00:00Z --test-end 2025-10-01T00:00:00Z --cs-filter off
+```
+
+The fixed model predicts the next interval mean using the previous completed
+interval, causal lags and calendar features. Missing current foF2 skips the
+forecast. Persistence is scored on exactly the same available pairs. The output
+includes examples, predictions, metrics, coverage, a chart and a separate model;
+keep these generated artifacts outside version control.
+
+This is an archival evaluation: observation publication latency and later archive
+revisions are not known. No test-period retraining or tuning is performed.
