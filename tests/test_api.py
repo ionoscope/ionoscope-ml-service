@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import prediction_service
+import pytest
 
 
 client = TestClient(app)
@@ -11,6 +12,24 @@ client = TestClient(app)
 
 class FakeModel:
     pass
+
+
+@pytest.mark.parametrize('payload', [
+    {'station': '../bad', 'features': {'foF2': 4}},
+    {'station': '', 'features': {'foF2': 4}},
+    {'station': 'TR169', 'features': {}},
+    {'station': 'TR169', 'features': {'foF2': 'NaN'}},
+    {'station': 'TR169', 'features': {'foF2': 'Infinity'}},
+])
+def test_invalid_prediction_input(payload):
+    assert client.post('/api/v1/predict', json=payload).status_code == 422
+
+
+def test_corrupt_model_returns_service_unavailable(monkeypatch):
+    def fail(): raise ValueError('invalid model')
+    monkeypatch.setattr(prediction_service, 'load_production_model', fail)
+    assert client.get('/api/v1/model-info').status_code == 503
+    assert client.post('/api/v1/predict', json={'station': 'TR169', 'features': {'foF2': 4}}).status_code == 503
 
 
 def test_health() -> None:

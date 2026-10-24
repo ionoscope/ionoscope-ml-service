@@ -132,3 +132,24 @@ keep these generated artifacts outside version control.
 
 This is an archival evaluation: observation publication latency and later archive
 revisions are not known. No test-period retraining or tuning is performed.
+
+
+## Prediction request validation
+
+Prediction requests require a valid station code and finite numeric features,
+including current `foF2` or `foF2_state`. Empty state, NaN/Infinity and invalid
+station codes return 422; a synthetic default 5 MHz is not produced for empty
+requests. Station codes are trimmed and normalized to uppercase.
+Unreadable model artifacts or inference failures return 503 with
+`detail.code = "model_unavailable"`. The existing missing-artifact persistence
+fallback remains explicit in the model name. `/health` is process liveness;
+`/api/v1/model-info` should be checked to confirm an actual model is loaded.
+
+
+## Artifact portability
+
+ML dependency versions are pinned to the environment of the stored model.
+The loader registers the legacy `_loss` module alias used by Windows sklearn
+1.8 Cython pickles, enabling this trusted artifact to load on Linux without
+rewriting it. Real predictions have been checked across Windows and the Linux
+Docker image. Upgrade dependencies together with artifact revalidation/retraining.

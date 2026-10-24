@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+import sys
 from typing import Any
 
 import joblib
@@ -16,6 +17,11 @@ def load_production_model(path: str | None = None) -> dict[str, Any] | None:
     model_path = Path(path) if path else DEFAULT_MODEL_PATH
     if not model_path.exists():
         return None
+    # Windows sklearn 1.8 wheels pickle the Cython loss class under the short
+    # module name `_loss`; Linux wheels expose its fully qualified name only.
+    # Keep a narrowly scoped compatibility alias for these trusted artifacts.
+    from sklearn._loss import _loss
+    sys.modules.setdefault("_loss", _loss)
     artifact = joblib.load(model_path)
     if not isinstance(artifact, dict):
         raise TypeError(f"Unsupported model artifact type: {type(artifact)!r}")
