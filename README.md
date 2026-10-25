@@ -212,6 +212,10 @@ Docker image. Upgrade dependencies together with artifact revalidation/retrainin
 
 ## Live shadow comparison
 
+For a PC-independent trial, see [GitHub Actions collection](docs/cloud-actions-trial.md).
+Its schedule is opt-in, state is checkpointed outside Git, and the cloud journal
+is kept separate from local observations. It does not host or switch the public API.
+
 The Compose stack runs a separate worker comparing the frozen candidate, served
 artifact and persistence on the same published generation. User requests keep
 using the original artifact. See [runtime contract, scoring and rollback](docs/live-shadow-2026-10-25.md).

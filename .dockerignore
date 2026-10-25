@@ -24,3 +24,6 @@ features_*
 update_tasks
 
 shadow_data
+cloud-state
+cloud-models
+cloud-checkpoint.zip

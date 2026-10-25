@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "data_commit": "778482391b1cf00e0c997a5081c23a086705344a",
+  "stations": ["AL945", "AT138", "CAJ2M", "DB049", "EB040", "GA762", "GM037", "GR13L", "IF843", "JI91J", "JR055", "NI135", "PQ052", "RO041", "SO148", "TR169", "WA619"],
+  "models": {
+    "original": {"file": "original.joblib", "sha256": "c32e2157a7d066ff352c61db44ec48d33888b76fd270eb1520ef4cb708625b82"},
+    "candidate": {"file": "candidate.joblib", "sha256": "3f3008c698bee8b4b02a299cecda79441939c5db891db2b4f2c1183c24ee6350"}
+  },
+  "release_tag": "shadow-models-v1"
+}

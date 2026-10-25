@@ -1,0 +1,82 @@
+name: Ionoscope cloud shadow trial
+
+on:
+  workflow_dispatch:
+    inputs:
+      initialize:
+        description: 'First run only: create a new CLOUD journal if no checkpoint exists'
+        type: boolean
+        default: false
+  schedule:
+    - cron: '6,21,36,51 * * * *'
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: ionoscope-cloud-shadow
+  cancel-in-progress: false
+
+jobs:
+  collect-and-compare:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' || vars.IONOSCOPE_CLOUD_SHADOW_ENABLED == 'true')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      OMP_NUM_THREADS: '2'
+      OPENBLAS_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: ionoscope-ml-service
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ionoscope/ionoscope-data
+          ref: 778482391b1cf00e0c997a5081c23a086705344a
+          path: ionoscope-data
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+      - name: Restore the latest trusted journal (never use a cache for state)
+        env:
+          INITIALIZE: ${{ inputs.initialize }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=()
+          if [ "$INITIALIZE" = "true" ]; then args+=(--initialize); fi
+          python ionoscope-ml-service/scripts/cloud_artifacts.py restore --state cloud-state "${args[@]}"
+      - name: Install inference dependencies
+        timeout-minutes: 2
+        run: python -m pip install --disable-pip-version-check -r ionoscope-ml-service/requirements.txt
+      - name: Collect completed intervals and make prospective predictions
+        timeout-minutes: 8
+        run: >-
+          python ionoscope-ml-service/scripts/run_cloud_shadow.py
+          --state cloud-state --data-root ionoscope-data --models cloud-models
+      - name: Make a consistent SQLite checkpoint, including on collection failures
+        if: ${{ always() && hashFiles('cloud-state/shadow/shadow.sqlite3') != '' }}
+        run: >-
+          python ionoscope-ml-service/scripts/cloud_artifacts.py snapshot
+          --state cloud-state --archive cloud-checkpoint.zip
+      - name: Persist state outside Git
+        id: checkpoint
+        if: ${{ always() && hashFiles('cloud-checkpoint.zip') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ionoscope-cloud-state-${{ github.run_id }}-${{ github.run_attempt }}
+          path: cloud-checkpoint.zip
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30
+      - name: Keep three newest checkpoints, after successful upload only
+        if: ${{ always() && steps.checkpoint.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python ionoscope-ml-service/scripts/cloud_artifacts.py cleanup
