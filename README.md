@@ -121,7 +121,7 @@ its raw GIRO reader and normalization functions. Install optional evaluation
 packages with `python -m pip install -r requirements-evaluation.txt`.
 
 ```powershell
-python scripts/evaluate_month.py --raw-dir ../archive/data/raw/giro --output ../experiment/evaluation --train-start 2024-09-01T00:00:00Z --test-start 2025-09-01T00:00:00Z --test-end 2025-10-01T00:00:00Z --cs-filter off
+python scripts/evaluate_month.py --raw-dir ../archive/data/raw/giro --output ../experiment/evaluation --train-start 2024-09-01T00:00:00Z --test-start 2025-09-01T00:00:00Z --test-end 2025-10-01T00:00:00Z --cs-filter threshold --min-cs 50
 ```
 
 The fixed model predicts the next interval mean using the previous completed
@@ -133,6 +133,62 @@ keep these generated artifacts outside version control.
 This is an archival evaluation: observation publication latency and later archive
 revisions are not known. No test-period retraining or tuning is performed.
 
+Threshold mode is the default: only physical foF2 with known finite CS >= 50
+is used for inputs and labels. Unknown CS (including -1) is excluded. `--cs-filter off`
+is an explicit experimental option. The script trains a separate offline model;
+its metrics do not evaluate or replace the artifact currently served by the API.
+Each run writes `leakage_audit.json`: removing test-month raw rows must leave
+training inputs/labels unchanged, and three truncated raw replays must reproduce
+earlier inputs and predictions exactly. A failed audit stops the evaluation.
+
+To inspect the actual deployed artifact without training or replacing it, use
+`scripts/audit_served_model.py --output <local-output-dir> --raw-dir <GIRO-archive>`
+with the development stack running. It checks every catalog station, compares
+local artifact predictions with ML API, and reports missing input features.
+Its GIRO-only monthly check is explicitly diagnostic when historical external
+drivers are missing. See [the served model audit](docs/served-model-audit-2026-10-24.md).
+
+
+## Restoring the production scheme for a historical year/month
+
+`scripts/restore_historical_features.py --run-dir <run-directory>` reads a frozen
+`cohort.json`, GIRO raw archives under `giro/raw/giro`, and GFZ/OMNI CSVs under
+`drivers/processed`. It uses the production normalization and feature builder,
+preserving the 152-column schema of the existing artifact. `--resume` reuses
+prepared outputs only when source, code and output hashes match.
+
+Historical availability rules delay hourly OMNI means by one hour, Kp/ap by
+three hours, and daily Ap/F10.7 by one day. These are conservative period-end
+assumptions, not measured publication latencies. Missing observations remain
+missing, unknown CS is rejected, and training inputs/labels must remain unchanged
+when all test-month GIRO rows are physically removed.
+
+Train a separate candidate with explicit bounds and the frozen schema:
+
+```powershell
+python scripts/train_production_model.py --features-dir <run-directory>/features --output <run-directory>/candidate/model.joblib --train-start 2024-09-01T00:00:00Z --test-start 2025-09-01T00:00:00Z --test-end 2025-10-01T00:00:00Z --feature-schema production_models/fof2_next_15min.joblib --data-manifest <run-directory>/preparation.json --model-version 0.2.0-historical-candidate
+python scripts/compare_restored_models.py --run-dir <run-directory> --candidate <run-directory>/candidate/model.joblib
+```
+
+No row cap or test-period tuning is used. The candidate keeps 300 boosting
+iterations and disables random early stopping; the test month is never used
+for model fitting. Training saves input hashes, station codes, period boundaries,
+preparation rules, per-station scores, coverage and persistence metrics. The
+comparison uses identical pairs for the original artifact, candidate and baseline.
+Generated datasets/models stay outside Git. A candidate expecting delayed drivers
+must be deployed with matching runtime preparation rules; it is not automatically
+installed into the running API.
+
+For a later month, keep the existing candidate unchanged and pass explicit
+`--history-start`, `--test-start`, `--test-end` and `--feature-schema` to the
+restoration script. The comparison script also accepts `--test-start` and
+`--test-end`; `--expected-candidate-sha256` enforces the frozen model identity.
+It rejects candidates whose training target end overlaps the evaluation period
+or whose training cutoff is unknown. Comparison never fits a model.
+
+The October 2025 run uses `../output/october_holdout_20261024/frozen_plan.json`
+to record the unchanged September candidate, original cohort, evaluation dates,
+and provenance of the September observations used only as lag history.
 
 ## Prediction request validation
 
@@ -153,3 +209,11 @@ The loader registers the legacy `_loss` module alias used by Windows sklearn
 1.8 Cython pickles, enabling this trusted artifact to load on Linux without
 rewriting it. Real predictions have been checked across Windows and the Linux
 Docker image. Upgrade dependencies together with artifact revalidation/retraining.
+
+## Live shadow comparison
+
+The Compose stack runs a separate worker comparing the frozen candidate, served
+artifact and persistence on the same published generation. User requests keep
+using the original artifact. See [runtime contract, scoring and rollback](docs/live-shadow-2026-10-25.md).
+`GET /api/v1/shadow/status` reports paired errors, coverage and latency;
+zero scored pairs or unavailable inputs do not establish a quality result.

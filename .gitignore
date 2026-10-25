@@ -7,3 +7,5 @@ env/
 .env
 .env.local
 production_models/*.joblib
+
+shadow_data/

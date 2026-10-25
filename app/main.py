@@ -10,6 +10,10 @@ from .schemas.prediction import (
     PredictionResponse,
 )
 from .services.prediction_service import get_model_info, predict_fof2_next
+import json
+import os
+from datetime import UTC, datetime
+from pathlib import Path
 
 
 app = FastAPI(
@@ -23,6 +27,24 @@ app = FastAPI(
 @app.get("/health", response_model=HealthResponse, tags=["health"])
 def health() -> HealthResponse:
     return HealthResponse(status="ok", service="ionoscope-ml-service")
+
+
+@app.get('/api/v1/shadow/status', tags=['model'])
+def shadow_status() -> dict:
+    directory = os.getenv('IONOSCOPE_SHADOW_DIR')
+    if not directory:
+        return {'phase': 'disabled', 'automatic_promotion': False}
+    try:
+        report = json.loads((Path(directory) / 'status.json').read_text(encoding='utf-8'))
+        updated = datetime.fromisoformat(report['updated_at'])
+        if (datetime.now(UTC) - updated).total_seconds() > 120:
+            report['phase'] = 'stale'
+        return report
+    except FileNotFoundError:
+        return {'phase': 'starting', 'automatic_promotion': False}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=503, detail={'code': 'shadow_status_unavailable',
+                                                    'message': 'Shadow report is unavailable'}) from exc
 
 
 @app.post("/api/v1/predict", response_model=PredictionResponse, tags=["prediction"])

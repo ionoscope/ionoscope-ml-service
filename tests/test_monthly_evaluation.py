@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from scripts.evaluate_month import STEP, build_examples, split_examples
+from scripts.evaluate_month import STEP, build_examples, split_examples, prepare_observations
 
 
 def example_frame():
@@ -46,3 +46,15 @@ def test_future_observations_cannot_change_earlier_model_inputs():
     features = ['foF2'] + [c for c in before if c.startswith(('foF2_lag_', 'foF2_diff_', 'foF2_mean_'))]
     pd.testing.assert_frame_equal(before.loc[before.origin <= cutoff, features],
                                   after.loc[after.origin <= cutoff, features])
+
+
+def test_threshold_rejects_unknown_cs_and_low_cs_for_inputs_and_labels():
+    times = pd.date_range('2025-09-01', periods=6, freq='15min', tz='UTC')
+    raw = pd.DataFrame({'station': 'TR169', 'time_utc': times, 'foF2': [5.] * 6,
+                        'CS': [70., 20., np.nan, -1., np.inf, 50.]})
+    normalized = prepare_observations(raw, 50)
+    assert normalized.foF2.notna().tolist() == [True, False, False, False, False, True]
+    assert prepare_observations(raw, None).foF2.notna().all()
+    frame = build_examples(normalized, times[0], times[-1] + STEP)
+    first = frame[frame.source_interval_start == times[0]].iloc[0]
+    assert first.foF2 == 5 and pd.isna(first.actual)

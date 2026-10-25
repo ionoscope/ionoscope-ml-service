@@ -19,6 +19,43 @@ from data_preparation.normalize_time_grid import read_giro_raw, normalize_giro
 STEP = pd.Timedelta(minutes=15)
 
 
+def prepare_observations(raw: pd.DataFrame, min_cs: float | None) -> pd.DataFrame:
+    """Require known confidence in threshold mode, including for evaluation labels."""
+    raw = raw.copy()
+    valid = raw.foF2.between(.5, 25)
+    if min_cs is not None:
+        valid &= np.isfinite(raw.CS) & (raw.CS >= min_cs)
+    raw.loc[~valid, "foF2"] = np.nan
+    return normalize_giro(raw, "15min", None, "30min")
+
+
+def audit_causality(raw, frame, features, start, cutoff, end, min_cs, model):
+    train, _ = split_examples(frame, start, cutoff, end)
+    prefix = build_examples(prepare_observations(raw[raw.time_utc < cutoff], min_cs), start, end)
+    prefix_train, _ = split_examples(prefix, start, cutoff, end)
+    pd.testing.assert_frame_equal(train[features + ["actual"]], prefix_train[features + ["actual"]])
+    checks = []
+    for fraction in [0.05, 0.5, 0.95]:
+        boundary = (cutoff + (end - cutoff) * fraction).floor("15min")
+        prefix = build_examples(prepare_observations(raw[raw.time_utc < boundary], min_cs), start, end)
+        mask = (frame.origin >= cutoff) & (frame.origin <= boundary)
+        pd.testing.assert_frame_equal(frame.loc[mask, features], prefix.loc[mask, features])
+        available = mask & frame.foF2.notna()
+        delta = None
+        if available.any():
+            delta = float(np.max(np.abs(model.predict(frame.loc[available, features]) -
+                                       model.predict(prefix.loc[available, features]))))
+            assert delta == 0
+        checks.append({"raw_cutoff": str(boundary), "forecasts_compared": int(available.sum()),
+                       "max_prediction_difference": delta})
+    observations = pd.to_datetime(frame.foF2_source_timestamp, utc=True)
+    assert not (observations >= frame.origin).any()
+    assert train.target_end.max() <= cutoff
+    return {"training_unchanged_without_test_raw_rows": True,
+            "current_observation_at_or_after_issue": 0, "raw_prefix_replays": checks,
+            "conflicting_duplicate_fof2_timestamps": int((raw.groupby("time_utc").foF2.nunique() > 1).sum())}
+
+
 def build_examples(normalized: pd.DataFrame, train_start: pd.Timestamp, test_end: pd.Timestamp) -> pd.DataFrame:
     """An interval's values become available at its end, never at its start."""
     grid = pd.date_range(train_start - pd.Timedelta(days=7), test_end - STEP, freq=STEP)
@@ -66,7 +103,7 @@ def main():
     parser.add_argument("--train-start", default="2024-09-01T00:00:00Z")
     parser.add_argument("--test-start", default="2025-09-01T00:00:00Z")
     parser.add_argument("--test-end", default="2025-10-01T00:00:00Z")
-    parser.add_argument("--cs-filter", choices=["off", "threshold"], default="off")
+    parser.add_argument("--cs-filter", choices=["off", "threshold"], default="threshold")
     parser.add_argument("--min-cs", type=float, default=50)
     args = parser.parse_args()
     start, cutoff, end = [pd.Timestamp(v).tz_convert("UTC") for v in (args.train_start, args.test_start, args.test_end)]
@@ -77,9 +114,8 @@ def main():
     raw = read_giro_raw(Path(args.raw_dir), include_stations={args.station})
     if raw.empty:
         raise ValueError("No station observations found")
-    # Broad physical bounds; no interpolation, proxy substitution or future filling.
-    raw.loc[~raw.foF2.between(.5, 25), "foF2"] = np.nan
-    normalized = normalize_giro(raw, "15min", args.min_cs if args.cs_filter == "threshold" else None, "30min")
+    min_cs = args.min_cs if args.cs_filter == "threshold" else None
+    normalized = prepare_observations(raw, min_cs)
     frame = build_examples(normalized, start, end)
     train, test = split_examples(frame, start, cutoff, end)
     features = [c for c in frame.columns if c == "foF2" or c.startswith(("foF2_lag_", "foF2_diff_", "foF2_mean_"))
@@ -94,6 +130,8 @@ def main():
     model = HistGradientBoostingRegressor(max_iter=300, learning_rate=.05,
         l2_regularization=.01, early_stopping=False, random_state=42)
     model.fit(train.loc[valid_train, features], train.loc[valid_train, "actual"])
+    audit = audit_causality(raw, frame, features, start, cutoff, end, min_cs, model)
+    (output / "leakage_audit.json").write_text(json.dumps(audit, indent=2), encoding="utf-8")
     eligible = test.foF2.notna()
     test["prediction"] = np.nan
     if eligible.any():
@@ -108,6 +146,8 @@ def main():
     baseline = metrics(common.actual, common.persistence)
     report = {
         "station": args.station, "train_start": str(start), "train_end_exclusive": str(cutoff),
+        "evaluation_model": "Separate offline model; deployed production artifact is not evaluated or replaced",
+        "cs_policy": "Known finite CS >= min_cs" if min_cs is not None else "Experimental unfiltered CS",
         "test_start": str(cutoff), "test_end_exclusive": str(end), "cs_filter": args.cs_filter,
         "min_cs": args.min_cs if args.cs_filter == "threshold" else None,
         "target": "Mean foF2 over the next 15-minute interval; issue at previous interval end",
