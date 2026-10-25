@@ -110,7 +110,7 @@ def trusted(artifact):
 def restore(destination, initialize=False):
     page = api('/actions/artifacts?per_page=100')
     artifacts = sorted((a for a in page['artifacts'] if a['name'].startswith(PREFIX)),
-                       key=lambda a: a['id'], reverse=True)
+                       key=lambda a: (a.get('created_at', ''), a['id']), reverse=True)
     for artifact in artifacts:
         if not trusted(artifact):
             continue
@@ -165,7 +165,7 @@ def snapshot(state, archive):
 def cleanup(keep=3):
     page = api('/actions/artifacts?per_page=100')
     artifacts = sorted((a for a in page['artifacts'] if a['name'].startswith(PREFIX)),
-                       key=lambda a: a['id'], reverse=True)
+                       key=lambda a: (a.get('created_at', ''), a['id']), reverse=True)
     artifacts = [a for a in artifacts if trusted(a)]
     for artifact in artifacts[keep:]:
         api('/actions/artifacts/' + str(artifact['id']), delete=True)

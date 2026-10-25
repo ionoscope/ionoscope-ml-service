@@ -74,9 +74,11 @@ def test_restore_understands_actions_outer_zip_and_restores_latest_rerun(tmp_pat
     with zipfile.ZipFile(outer, 'w') as bundle:
         bundle.write(inner, 'cloud-checkpoint.zip')
     artifact = {'name': artifacts.PREFIX + '1-1', 'id': 1, 'expired': False,
+                'created_at': '2026-10-25T12:30:00Z',
                 'archive_download_url': 'https://api.github.com/example',
                 'digest': 'sha256:' + hashlib.sha256(outer.read_bytes()).hexdigest()}
-    monkeypatch.setattr(artifacts, 'api', lambda *a, **k: {'artifacts': [artifact]})
+    older = {**artifact, 'id': 900, 'created_at': '2026-10-25T12:25:00Z'}
+    monkeypatch.setattr(artifacts, 'api', lambda *a, **k: {'artifacts': [older, artifact]})
     monkeypatch.setattr(artifacts, 'trusted', lambda a: True)
     monkeypatch.setattr(artifacts, 'download', lambda url, path: path.write_bytes(outer.read_bytes()))
     assert artifacts.restore(tmp_path / 'restored') == 1
