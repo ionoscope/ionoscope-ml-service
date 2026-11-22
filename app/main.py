@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path as PathParameter
 
 from .schemas.prediction import (
     HealthResponse,
@@ -22,6 +22,20 @@ app = FastAPI(
     description="Minimal foF2 next-step inference service for IonoScope.",
     responses={503: {"model": ErrorResponse}},
 )
+
+
+@app.get('/api/v1/weekly/{station}', tags=['model'])
+def weekly_forecast(station: str = PathParameter(pattern=r'^[A-Za-z0-9_-]{1,32}$')) -> dict:
+    directory = os.getenv('IONOSCOPE_WEEKLY_DIR')
+    if not directory:
+        raise HTTPException(503, detail={'code':'weekly_unavailable','message':'Weekly experiment is disabled'})
+    try:
+        result = json.loads((Path(directory)/'stations'/f'{station.upper()}.json').read_text(encoding='utf-8'))
+        result['worker_stale'] = (datetime.now(UTC)-datetime.fromisoformat(result['updated_at'])).total_seconds() > 900
+        result['forecast_stale'] = (datetime.now(UTC)-datetime.fromisoformat(result['generated_at'])).total_seconds() > 27*3600
+        return result
+    except (OSError, ValueError, KeyError):
+        raise HTTPException(503, detail={'code':'weekly_unavailable','message':'Weekly model is collecting enough qualified history'})
 
 
 @app.get("/health", response_model=HealthResponse, tags=["health"])

@@ -9,6 +9,7 @@ env/
 production_models/*.joblib
 
 shadow_data/
+weekly_data/
 cloud-state/
 cloud-models/
 cloud-checkpoint.zip

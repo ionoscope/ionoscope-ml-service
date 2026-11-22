@@ -24,6 +24,7 @@ features_*
 update_tasks
 
 shadow_data
+weekly_data
 cloud-state
 cloud-models
 cloud-checkpoint.zip

@@ -1,5 +1,50 @@
 # IonoScope ML Service
 
+## Experimental weekly model
+
+`scripts/run_weekly_worker.py` is an independent experiment. It never replaces
+`production_models/fof2_next_15min.joblib` or changes `/api/v1/predict`.
+The worker imports completed immutable GIRO batches into `weekly_data/`, filters
+physical foF2 with CS >= 50 (or manual scaling), deduplicates the first qualified
+measurement and aggregates completed 15-minute intervals. The initial historical
+import is training data, not evidence of prospective accuracy.
+
+The pooled HistGradientBoosting model uses the last available 24-hour profile,
+mean, standard deviation, last value, coverage, station, calendar cycles and the
+true lead time. Training anchors use only their preceding day; all target
+intervals must finish before the training cutoff. The experiment requires at
+least 1,000 training pairs and 30 examples at six-day-or-longer lead. Training
+targets are sampled hourly with a rotating quarter-hour offset; inference returns
+all 672 quarter-hour intervals across seven days. Predictions are clipped to the
+physical range 0.5–25 MHz. This is an initial experimental model, not a validated
+replacement for the production artifact.
+
+Retraining occurs every seven elapsed days. Forecasts issue once per UTC date
+for stations with >= 50% qualified coverage in their last available day and a
+last observation no older than 120 minutes. Forecast intervals start strictly
+after calculation. Insufficient inputs remain unavailable; no persistence
+fallback or fabricated forecast is inserted. The fixed daily run is retained
+through restarts, and every five minutes newly received completed observations
+are matched to saved forecasts. The first qualified interval fact is frozen.
+MAE/RMSE over the last 30 days are grouped by 0–24, 24–72 and 72–168 hour leads;
+these are forecast-instance counts and can include different daily predictions
+of the same target. They are not directly comparable to 15-minute model metrics.
+
+Run one cycle locally using the Docker development stack:
+
+```powershell
+docker compose -f docker-compose.dev.yml -p ionoscope-api-check run --rm --no-deps weekly-model-worker python scripts/run_weekly_worker.py --once
+```
+
+Run this from `ionoscope-infrastructure`. The normal Compose stack starts the
+worker continuously. `GET /api/v1/weekly/{station}` on ML and
+`GET /api/v1/forecast/weekly/{station}` on the main API read prepared snapshots;
+they do not train during requests. A worker snapshot older than 15 minutes or a
+daily forecast older than 27 hours is flagged stale. The interface hides stale
+experimental curves. Historical experiment files are excluded from Git and
+Docker build contexts. Keep Docker running (and the computer awake) to collect
+prospective results; a full seven-day horizon needs at least seven days to verify.
+
 Minimal model inference service for IonoScope.
 
 Version `0.1.0` supports the first product scenario:

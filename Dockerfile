@@ -11,8 +11,8 @@ COPY requirements.txt .
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=ionoscope:ionoscope . .
-RUN mkdir -p shadow_data production_models \
-    && chown ionoscope:ionoscope /app shadow_data production_models
+RUN mkdir -p shadow_data production_models weekly_data \
+    && chown ionoscope:ionoscope /app shadow_data production_models weekly_data
 
 USER ionoscope
 
